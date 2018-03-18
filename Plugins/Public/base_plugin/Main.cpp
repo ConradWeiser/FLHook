@@ -2314,6 +2314,7 @@ bool ExecuteCommandString_Callback(CCmds* cmd, const wstring &args)
 		{
 			PrintUserCmdText(client, L"ERR No password");
 			PrintUserCmdText(client, L"Usage: .basecreate <password> <archtype> <loadout> <type> <name>");
+			PrintUserCmdText(client, L"Usage: .basecreate <password> <archtype> <loadout> <type> <name> <posX> <posY> <posZ> <rotX> <rotY> <rotZ>");
 			return true;
 		}
 		wstring archtype = cmd->ArgStr(2);
@@ -2321,6 +2322,7 @@ bool ExecuteCommandString_Callback(CCmds* cmd, const wstring &args)
 		{
 			PrintUserCmdText(client, L"ERR No archtype");
 			PrintUserCmdText(client, L"Usage: .basecreate <password> <archtype> <loadout> <type> <name>");
+			PrintUserCmdText(client, L"Usage: .basecreate <password> <archtype> <loadout> <type> <name> <posX> <posY> <posZ> <rotX> <rotY> <rotZ>");
 			return true;
 		}
 		wstring loadout = cmd->ArgStr(3);
@@ -2328,6 +2330,7 @@ bool ExecuteCommandString_Callback(CCmds* cmd, const wstring &args)
 		{
 			PrintUserCmdText(client, L"ERR No loadout");
 			PrintUserCmdText(client, L"Usage: .basecreate <password> <archtype> <loadout> <type> <name>");
+			PrintUserCmdText(client, L"Usage: .basecreate <password> <archtype> <loadout> <type> <name> <posX> <posY> <posZ> <rotX> <rotY> <rotZ>");
 			return true;
 		}
 		wstring type = cmd->ArgStr(4);
@@ -2335,6 +2338,7 @@ bool ExecuteCommandString_Callback(CCmds* cmd, const wstring &args)
 		{
 			PrintUserCmdText(client, L"ERR No type");
 			PrintUserCmdText(client, L"Usage: .basecreate <password> <archtype> <loadout> <type> <name>");
+			PrintUserCmdText(client, L"Usage: .basecreate <password> <archtype> <loadout> <type> <name> <posX> <posY> <posZ> <rotX> <rotY> <rotZ>");
 			return true;
 		}
 		uint theaffiliation = cmd->ArgInt(5);
@@ -2344,9 +2348,19 @@ bool ExecuteCommandString_Callback(CCmds* cmd, const wstring &args)
 		{
 			PrintUserCmdText(client, L"ERR No name");
 			PrintUserCmdText(client, L"Usage: .basecreate <password> <archtype> <loadout> <type> <name>");
+			PrintUserCmdText(client, L"Usage: .basecreate <password> <archtype> <loadout> <type> <name> <posX> <posY> <posZ> <rotX> <rotY> <rotZ>");
 			return true;
 		}
 
+		Vector basePos;
+		basePos.x = cmd->ArgFloat(7);
+		basePos.y = cmd->ArgFloat(8);
+		basePos.z = cmd->ArgFloat(9);
+
+		Vector baseRot;
+		baseRot.x = cmd->ArgFloat(10);
+		baseRot.y = cmd->ArgFloat(11);
+		baseRot.z = cmd->ArgFloat(12);
 
 
 		// Check for conflicting base name
@@ -2363,6 +2377,28 @@ bool ExecuteCommandString_Callback(CCmds* cmd, const wstring &args)
 			wstos(HkGetAccountID(HkGetAccountByCharname(charname))).c_str());
 
 		PlayerBase *newbase = new PlayerBase(client, password, basename);
+
+		// Check if there was a specific base position 
+		if (!isnan(basePos.x) && !isnan(basePos.y) && !isnan(basePos.z))
+		{
+			newbase->position = basePos;
+
+			// If we do have a custom base position, check if we have a custom base rotation. If not, set the rotation to 0 0 0
+			if (!isnan(baseRot.x) && !isnan(baseRot.y) && !isnan(baseRot.z))
+			{
+				newbase->rotation = EulerMatrix(baseRot);
+			}
+
+			else
+			{
+				baseRot.x = 0;
+				baseRot.y = 0;
+				baseRot.z = 0;
+
+				newbase->rotation = EulerMatrix(baseRot);
+			}
+		}
+
 		player_bases[newbase->base] = newbase;
 		newbase->affiliation = theaffiliation;
 		newbase->basetype = wstos(type);
