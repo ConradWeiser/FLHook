@@ -26,6 +26,7 @@
 #include <sstream>
 #include <iostream>
 #include <hookext_exports.h>
+#include <boost/lexical_cast.hpp>
 
 #define ADDR_COMMON_VFTABLE_MINE 0x139C64
 #define ADDR_COMMON_VFTABLE_CM 0x139C90
@@ -76,7 +77,11 @@ struct AUTOBUY_PLAYERINFO
 	bool bAutobuyBB;
 	bool bAutobuyCloak;
 	bool bAutobuyMunition;
+
+	// Jumpdrive is listed as a pair, allowing the value to be a custom value set by the user to be bought per autobuy operation
+	pair<bool, uint> bAutobuyJump;
 };
+
 
 static map <uint, AUTOBUY_PLAYERINFO> mapAutobuyPlayerInfo;
 static map <uint, uint> mapAutobuyFLHookExtras;
@@ -218,6 +223,11 @@ void LoadSettings()
 							mapAutobuyFLHookExtras[CreateID(ini.get_value_string(0))] = CreateID(ini.get_value_string(1));
 							++iLoaded2;
 						}
+						else if (ini.is_value("item_flat"))
+						{
+							mapAutobuyFLHookExtras[CreateID(ini.get_value_string(0))] = ini.get_value_int(1);
+							++iLoaded2;
+						}
 					}
 				}
 			}
@@ -285,6 +295,8 @@ void AutobuyInfo(uint iClientID)
 	PrintUserCmdText(iClientID, L"   mines - enable/disable autobuy for mines");
 	PrintUserCmdText(iClientID, L"   cd - enable/disable autobuy for cruise disruptors");
 	PrintUserCmdText(iClientID, L"   cm - enable/disable autobuy for countermeasures");
+	PrintUserCmdText(iClientID, L"   cloak - enable/disable autobuy for cloak batteries");
+	PrintUserCmdText(iClientID, L"   jump [value] - enable/disable autobuy for jumpdrive batteries. [value] is an optional maximum limit which can be set for autobuy purchases.");
 	PrintUserCmdText(iClientID, L"   reload - enable/disable autobuy for nanobots/shield batteries");
 	PrintUserCmdText(iClientID, L"   all: enable/disable autobuy for all of the above");
 	PrintUserCmdText(iClientID, L"Examples:");
@@ -303,6 +315,7 @@ bool  UserCmd_AutoBuy(uint iClientID, const wstring &wscCmd, const wstring &wscP
 
 	wstring wscType = ToLower(GetParam(wscParam, ' ', 0));
 	wstring wscSwitch = ToLower(GetParam(wscParam, ' ', 1));
+	wstring wscLimit = ToLower(GetParam(wscParam, ' ', 2));
 
 	if (!wscType.compare(L"info"))
 	{
@@ -314,6 +327,9 @@ bool  UserCmd_AutoBuy(uint iClientID, const wstring &wscCmd, const wstring &wscP
 		PrintUserCmdText(iClientID, L"Munitions: %s", mapAutobuyPlayerInfo[iClientID].bAutobuyMunition ? L"On" : L"Off");
 		PrintUserCmdText(iClientID, L"Cloak Batteries: %s", mapAutobuyPlayerInfo[iClientID].bAutobuyCloak ? L"On" : L"Off");
 		PrintUserCmdText(iClientID, L"Nanobots/Shield Batteries: %s", mapAutobuyPlayerInfo[iClientID].bAutobuyBB ? L"On" : L"Off");
+		PrintUserCmdText(iClientID, L"Jumpdrive Batteries: %s with a max limit of %s", mapAutobuyPlayerInfo[iClientID].bAutobuyJump.first ? L"On" : L"Off", 
+			to_wstring(mapAutobuyPlayerInfo[iClientID].bAutobuyJump.second));
+
 		return true;
 	}
 
@@ -335,6 +351,7 @@ bool  UserCmd_AutoBuy(uint iClientID, const wstring &wscCmd, const wstring &wscP
 		mapAutobuyPlayerInfo[iClientID].bAutoBuyMissiles = bEnable;	
 		mapAutobuyPlayerInfo[iClientID].bAutobuyMunition = bEnable;
 		mapAutobuyPlayerInfo[iClientID].bAutoBuyTorps = bEnable;
+		mapAutobuyPlayerInfo[iClientID].bAutobuyJump.first = bEnable;
 		
 		HookExt::IniSetB(iClientID, "autobuy.bb", bEnable ? true : false);
 		HookExt::IniSetB(iClientID, "autobuy.cd", bEnable ? true : false);
@@ -344,6 +361,8 @@ bool  UserCmd_AutoBuy(uint iClientID, const wstring &wscCmd, const wstring &wscP
 		HookExt::IniSetB(iClientID, "autobuy.missiles", bEnable ? true : false);
 		HookExt::IniSetB(iClientID, "autobuy.munition", bEnable ? true : false);
 		HookExt::IniSetB(iClientID, "autobuy.torps", bEnable ? true : false);
+		HookExt::IniSetB(iClientID, "autobuy.jump", bEnable ? true : false);
+		HookExt::IniSetI(iClientID, "autobuy.jumpammolimit", -1);
 	}
 	else if (!wscType.compare(L"missiles")) {
 		mapAutobuyPlayerInfo[iClientID].bAutoBuyMissiles = bEnable;
@@ -376,6 +395,30 @@ bool  UserCmd_AutoBuy(uint iClientID, const wstring &wscCmd, const wstring &wscP
 	else if (!wscType.compare(L"cloak")) {
 		mapAutobuyPlayerInfo[iClientID].bAutobuyCloak = bEnable;
 		HookExt::IniSetB(iClientID, "autobuy.cloak", bEnable);
+	}
+	else if (!wscType.compare(L"jump")) {
+		mapAutobuyPlayerInfo[iClientID].bAutobuyJump.first = bEnable;
+		HookExt::IniSetB(iClientID, "autobuy.jump", bEnable);
+
+		// Handle the user maximum limit support for jumpdrive ammo. Note that a limit of -1 means the system will supply the max on autobuy operations.
+		if (wscLimit.length())
+		{
+			try {
+				HookExt::IniSetI(iClientID, "autobuy.jumpammolimit", boost::lexical_cast<int>(wscLimit));
+			}
+			catch (const boost::bad_lexical_cast &)
+			{
+				PrintUserCmdText(iClientID, L"OH SHIT I WAS CAUGHT MATE WHAT AM I GOING TO DO");
+				// We are caught, when we're unable to convert the userparameter into an integer.
+				HookExt::IniSetI(iClientID, "autobuy.jumpammolimit", -1);
+			}
+		}
+		else
+		{
+			PrintUserCmdText(iClientID, L"There were no args attached..");
+			HookExt::IniSetI(iClientID, "autobuy.jumpammolimit", -1);
+		}
+		
 	}
 	else
 		AutobuyInfo(iClientID);
@@ -502,7 +545,8 @@ void PlayerAutobuy(uint iClientID, uint iBaseID)
 	}
 
 	if (mapAutobuyPlayerInfo[iClientID].bAutoBuyCD || mapAutobuyPlayerInfo[iClientID].bAutoBuyCM || mapAutobuyPlayerInfo[iClientID].bAutoBuyMines ||
-		mapAutobuyPlayerInfo[iClientID].bAutoBuyMissiles || mapAutobuyPlayerInfo[iClientID].bAutobuyMunition || mapAutobuyPlayerInfo[iClientID].bAutoBuyTorps)
+		mapAutobuyPlayerInfo[iClientID].bAutoBuyMissiles || mapAutobuyPlayerInfo[iClientID].bAutobuyMunition || mapAutobuyPlayerInfo[iClientID].bAutoBuyTorps
+		|| mapAutobuyPlayerInfo[iClientID].bAutobuyJump.first)
 	{
 		// add mounted equip to a new list and eliminate double equipment(such as 2x lancer etc)
 		list<CARGO_INFO> lstMounted;
@@ -537,6 +581,7 @@ void PlayerAutobuy(uint iClientID, uint iBaseID)
 		// check mounted equip
 		foreach(lstMounted, CARGO_INFO, it2)
 		{
+
 			uint i = (*it2).iArchID;
 			AUTOBUY_CARTITEM aci;
 			Archetype::Equipment *eq = Archetype::GetEquipment(it2->iArchID);
@@ -594,6 +639,42 @@ void PlayerAutobuy(uint iClientID, uint iBaseID)
 				//Cloak Fuel
 				if (mapAutobuyPlayerInfo[iClientID].bAutobuyCloak)
 					ADD_EQUIP_TO_CART_FLHOOK(L"Cloak Batteries")
+
+				//Jumpdrive fuel
+				if (mapAutobuyPlayerInfo[iClientID].bAutobuyJump.first)
+				{
+
+					int customLimit = mapAutobuyPlayerInfo[iClientID].bAutobuyJump.second;
+					
+					// Do we have a custom limit? If so, use a different additem definition.
+					if (customLimit > 0) {
+
+						aci.iArchID = mapAutobuyFLHookExtras[eq->iArchID];
+
+						// Make sure the user defined limit is less than tha maximum limit
+						if (!mapAmmolimits[aci.iArchID] < customLimit)
+						{
+							aci.iCount = customLimit - HkPlayerAutoBuyGetCount(lstCargo, aci.iArchID);
+							aci.wscDescription = L"Jumpdrive Batteries";
+							lstCart.push_back(aci);
+						}
+						
+						else
+						{
+							PrintUserCmdText(iClientID, L"User defined limit for buying jumpdrive is set as %s, which shouldn't be above the maximum allowed of %s. Supplying max amount instead.",
+								to_wstring(customLimit), to_wstring(mapAmmolimits[aci.iArchID]));
+
+							ADD_EQUIP_TO_CART(L"Jumpdrive Batteries");
+						}
+
+
+					}
+
+					else
+					{
+						ADD_EQUIP_TO_CART_FLHOOK(L"Jumpdrive Batteries");
+					}
+				}
 			}
 		}
 	}
@@ -718,6 +799,8 @@ void __stdcall CharacterSelect_AFTER(struct CHARACTER_ID const &charId, unsigned
 	mapAutobuyPlayerInfo[iClientID].bAutoBuyMissiles = HookExt::IniGetB(iClientID, "autobuy.missiles");
 	mapAutobuyPlayerInfo[iClientID].bAutobuyMunition = HookExt::IniGetB(iClientID, "autobuy.munition");
 	mapAutobuyPlayerInfo[iClientID].bAutoBuyTorps = HookExt::IniGetB(iClientID, "autobuy.torps");
+	mapAutobuyPlayerInfo[iClientID].bAutobuyJump.first = HookExt::IniGetB(iClientID, "autobuy.jump");
+	mapAutobuyPlayerInfo[iClientID].bAutobuyJump.second = HookExt::IniGetI(iClientID, "autobuy.jumpammolimit");
 	
 }
 
