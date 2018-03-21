@@ -84,7 +84,10 @@ struct AUTOBUY_PLAYERINFO
 
 
 static map <uint, AUTOBUY_PLAYERINFO> mapAutobuyPlayerInfo;
-static map <uint, uint> mapAutobuyFLHookExtras;
+
+// Each FLHook object requires it's own map, due to each piece of equipment not being assigned a type. This prevents autobuy conflictions.
+static map <uint, uint> mapAutobuyCloak;
+static map <uint, uint> mapAutobuyJump;
 
 static map <uint, bool> mapStackableItems;
 
@@ -107,6 +110,7 @@ void LoadSettings()
 	string File_FLHook = "..\\exe\\flhook_plugins\\autobuy.cfg";
 	int iLoaded = 0;
 	int iLoaded2 = 0;
+	int iLoaded3 = 0;
 
 	INI_Reader ini;
 	if (ini.open(File_Misc.c_str(), false))
@@ -218,15 +222,15 @@ void LoadSettings()
 				{
 					while (ini.read_value())
 					{
-						if (ini.is_value("item"))
+						if (ini.is_value("cloak"))
 						{
-							mapAutobuyFLHookExtras[CreateID(ini.get_value_string(0))] = CreateID(ini.get_value_string(1));
+							mapAutobuyCloak[CreateID(ini.get_value_string(0))] = CreateID(ini.get_value_string(1));
 							++iLoaded2;
 						}
-						else if (ini.is_value("item_flat"))
+						else if (ini.is_value("jump"))
 						{
-							mapAutobuyFLHookExtras[CreateID(ini.get_value_string(0))] = ini.get_value_int(1);
-							++iLoaded2;
+							mapAutobuyJump[CreateID(ini.get_value_string(0))] = CreateID(ini.get_value_string(1));
+							++iLoaded3;
 						}
 					}
 				}
@@ -236,7 +240,8 @@ void LoadSettings()
 
 
 	ConPrint(L"AUTOBUY: Loaded %u ammo limit entries\n", iLoaded);
-	ConPrint(L"AUTOBUY: Loaded %u FLHook extra items\n", iLoaded2);
+	ConPrint(L"AUTOBUY: Loaded %u cloaking devices\n", iLoaded2);
+	ConPrint(L"AUTOBUY: loaded %u jumpdrives\n", iLoaded3);
 
 	//Very arbitrary for the time being, just hellfires
 	//This should use a list but I'll do that later
@@ -279,10 +284,6 @@ int HkPlayerAutoBuyGetCount(list<CARGO_INFO> &lstCargo, uint iItemArchID)
 								aci.wscDescription = desc; \
 								lstCart.push_back(aci); }
 
-#define ADD_EQUIP_TO_CART_FLHOOK(desc)	{ aci.iArchID = mapAutobuyFLHookExtras[eq->iArchID]; \
-								aci.iCount = mapAmmolimits[aci.iArchID] - HkPlayerAutoBuyGetCount(lstCargo, aci.iArchID); \
-								aci.wscDescription = desc; \
-								lstCart.push_back(aci); }
 
 void AutobuyInfo(uint iClientID)
 {
@@ -327,8 +328,7 @@ bool  UserCmd_AutoBuy(uint iClientID, const wstring &wscCmd, const wstring &wscP
 		PrintUserCmdText(iClientID, L"Munitions: %s", mapAutobuyPlayerInfo[iClientID].bAutobuyMunition ? L"On" : L"Off");
 		PrintUserCmdText(iClientID, L"Cloak Batteries: %s", mapAutobuyPlayerInfo[iClientID].bAutobuyCloak ? L"On" : L"Off");
 		PrintUserCmdText(iClientID, L"Nanobots/Shield Batteries: %s", mapAutobuyPlayerInfo[iClientID].bAutobuyBB ? L"On" : L"Off");
-		PrintUserCmdText(iClientID, L"Jumpdrive Batteries: %s with a max limit of %s", mapAutobuyPlayerInfo[iClientID].bAutobuyJump.first ? L"On" : L"Off", 
-			to_wstring(mapAutobuyPlayerInfo[iClientID].bAutobuyJump.second));
+		PrintUserCmdText(iClientID, L"Jumpdrive Batteries: %s", mapAutobuyPlayerInfo[iClientID].bAutobuyJump.first ? L"On" : L"Off");
 
 		return true;
 	}
@@ -634,45 +634,56 @@ void PlayerAutobuy(uint iClientID, uint iBaseID)
 			}
 
 			//FLHook handling
-			if (mapAutobuyFLHookExtras.find(eq->iArchID) != mapAutobuyFLHookExtras.end())
+			if (mapAutobuyCloak.find(eq->iArchID) != mapAutobuyCloak.end())
 			{
 				//Cloak Fuel
 				if (mapAutobuyPlayerInfo[iClientID].bAutobuyCloak)
-					ADD_EQUIP_TO_CART_FLHOOK(L"Cloak Batteries")
+				{
+					aci.iArchID = mapAutobuyCloak[eq->iArchID];
+					aci.iCount = mapAmmolimits[aci.iArchID] - HkPlayerAutoBuyGetCount(lstCargo, aci.iArchID);
+					aci.wscDescription = L"Cloak Batteries";
+					lstCart.push_back(aci);
+				}
+			}
+			else if (mapAutobuyJump.find(eq->iArchID) != mapAutobuyJump.end())
+			{
 
 				//Jumpdrive fuel
 				if (mapAutobuyPlayerInfo[iClientID].bAutobuyJump.first)
 				{
-
 					int customLimit = mapAutobuyPlayerInfo[iClientID].bAutobuyJump.second;
-					
-					// Do we have a custom limit? If so, use a different additem definition.
-					if (customLimit > 0) {
 
-						aci.iArchID = mapAutobuyFLHookExtras[eq->iArchID];
+					// Do we have a custom limit? If so, use a different additem definition.
+					if (customLimit > 0)
+					{
+						aci.iArchID = mapAutobuyCloak[eq->iArchID];
+						aci.wscDescription = L"Jumpdrive Batteries";
 
 						// Make sure the user defined limit is less than tha maximum limit
 						if (!mapAmmolimits[aci.iArchID] < customLimit)
 						{
 							aci.iCount = customLimit - HkPlayerAutoBuyGetCount(lstCargo, aci.iArchID);
-							aci.wscDescription = L"Jumpdrive Batteries";
 							lstCart.push_back(aci);
 						}
-						
+
 						else
 						{
-							PrintUserCmdText(iClientID, L"User defined limit for buying jumpdrive is set as %s, which shouldn't be above the maximum allowed of %s. Supplying max amount instead.",
+							PrintUserCmdText(
+								iClientID,
+								L"User defined limit for buying jumpdrive is set as %s, which shouldn't be above the maximum allowed of %s. Supplying max amount instead.",
 								to_wstring(customLimit), to_wstring(mapAmmolimits[aci.iArchID]));
 
-							ADD_EQUIP_TO_CART(L"Jumpdrive Batteries");
+							aci.iCount = mapAmmolimits[aci.iArchID] - HkPlayerAutoBuyGetCount(lstCargo, aci.iArchID);
+							lstCart.push_back(aci);
 						}
-
-
 					}
-
 					else
 					{
-						ADD_EQUIP_TO_CART_FLHOOK(L"Jumpdrive Batteries");
+						// We do not have a custom limit specified, thus we give them the maximum amount
+						aci.iArchID = mapAutobuyCloak[eq->iArchID];
+						aci.iCount = mapAmmolimits[aci.iArchID] - HkPlayerAutoBuyGetCount(lstCargo, aci.iArchID);
+						aci.wscDescription = L"Jumpdrive Batteries";
+						lstCart.push_back(aci);
 					}
 				}
 			}
