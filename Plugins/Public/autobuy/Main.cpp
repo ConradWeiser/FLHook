@@ -78,6 +78,8 @@ struct AUTOBUY_PLAYERINFO
 	bool bAutobuyMunition;
 };
 
+static map <uint, bool> mapAutorepairPlayers;
+
 static map <uint, AUTOBUY_PLAYERINFO> mapAutobuyPlayerInfo;
 static map <uint, uint> mapAutobuyFLHookExtras;
 
@@ -689,8 +691,93 @@ void PlayerAutobuy(uint iClientID, uint iBaseID)
 			}
 		}
 	}
+}
 
+//Autorepair code
+bool UserCmd_AutoRepair(uint iClientID, const wstring &wscCmd, const wstring &wscParam, const wchar_t *usage)
+{
+	if (!bPluginEnabled)
+	{
+		PrintUserCmdText(iClientID, L"Autorepair is disabled");
+		return true;
+	}
 
+	// If we're enabling the command, save the option to the ship save file, and add the vessel to the list
+	if (wscParam.find(L"on") == 0)
+	{
+		HookExt::IniSetB(iClientID, "autorepair.enabled", true);
+		mapAutorepairPlayers[iClientID] = true;
+		return true;
+	}
+	else if (wscParam.find(L"off") == 0)
+	{
+		HookExt::IniSetB(iClientID, "autorepair.enabled", false);
+		mapAutorepairPlayers.erase(iClientID);
+		return true;
+	}
+	else
+	{
+		PrintUserCmdText(iClientID, L"Autorepair automatically repairs your vessel each time you dock!");
+		PrintUserCmdText(iClientID, L"Usage: /autorepair [on|off]");
+		return true;
+	}
+}
+
+bool UserCmd_Test(uint iClientID, const wstring &wscCmd, const wstring &wscParam, const wchar_t *usage)
+{
+	float health;
+	float maxhealth;
+	uint shipObj;
+	pub::Player::GetShip(iClientID, shipObj);
+	pub::SpaceObj::GetHealth(shipObj, health, maxhealth);
+
+	PrintUserCmdText(iClientID, L"Current health: %f - Max health: %f", health, maxhealth);
+
+	int cash;
+	pub::Player::InspectCash(iClientID, cash);
+	PrintUserCmdText(iClientID, L"You have %i money", cash);
+
+	return true;
+}
+
+void HandleAutorepair(uint iClientID, uint iShipObj)
+{
+	if (!bPluginEnabled)
+	{
+		return;
+	}
+
+	// Get the current health for the ship obj
+	float currentHealth;
+	float maxHealth;
+	pub::SpaceObj::GetHealth(iShipObj, currentHealth, maxHealth);
+
+	// Calculate how many credits it will cost to repair the ship hull - It costs about 3.03 credits for every 1 hullpoint, so we'll round down
+	// Interger math will do the rounding for us. Loss of data is intentional.
+	const int hullRepairCost = (((currentHealth - maxHealth) * -1) * 3);
+
+	//Verify that the player has enough funds to make this repair
+	int playerFunds;
+	pub::Player::InspectCash(iClientID, playerFunds);
+
+	if (playerFunds < hullRepairCost)
+	{
+		PrintUserCmdText(iClientID, L"You do not have the required funds for an auto-repair");
+		return;
+	}
+
+	// Take the required funds, and repair the ship
+	wstring charname = (const wchar_t*)Players.GetActiveCharacterName(iClientID);
+	if(HkAddCash(charname, 0 - hullRepairCost) != HKE_OK)
+	{
+		// Something went wrong.
+		PrintUserCmdText(iClientID, L"An error has occured removing cash from your account. Operation aborted.");
+		return;
+	}
+
+	pub::SpaceObj::SetRelativeHealth(iShipObj, maxHealth);
+
+	PrintUserCmdText(iClientID, L"Info: Hull repaired, a payment of %i has been withdrawn from your account", hullRepairCost);
 }
 
 
@@ -718,6 +805,9 @@ void __stdcall CharacterSelect_AFTER(struct CHARACTER_ID const &charId, unsigned
 	mapAutobuyPlayerInfo[iClientID].bAutoBuyMissiles = HookExt::IniGetB(iClientID, "autobuy.missiles");
 	mapAutobuyPlayerInfo[iClientID].bAutobuyMunition = HookExt::IniGetB(iClientID, "autobuy.munition");
 	mapAutobuyPlayerInfo[iClientID].bAutoBuyTorps = HookExt::IniGetB(iClientID, "autobuy.torps");
+
+	// Autorepair information
+	mapAutorepairPlayers[iClientID] = HookExt::IniGetB(iClientID, "autorepair.enabled");
 	
 }
 
@@ -725,6 +815,18 @@ void __stdcall BaseEnter_AFTER(unsigned int iBaseID, unsigned int iClientID)
 {
 	pub::Player::GetBase(iClientID, iBaseID);
 	PlayerAutobuy(iClientID, iBaseID);
+}
+
+void __stdcall BaseEnter_BEFORE(unsigned int iBaseID, unsigned int iClientID)
+{
+	if (mapAutorepairPlayers[iClientID])
+	{
+		// Get the ship
+		uint shipObj;
+		pub::Player::GetShip(iClientID, shipObj);
+
+		HandleAutorepair(iClientID, shipObj);
+	}
 }
 
 void __stdcall PlayerLaunch_AFTER(unsigned int iShip, unsigned int iClientID)
@@ -750,6 +852,9 @@ USERCMD UserCmds[] =
 {
 	{ L"/autobuy", UserCmd_AutoBuy, L"Usage: /autobuy" },
 	{ L"/autobuy*", UserCmd_AutoBuy, L"Usage: /autobuy" },
+	{ L"/autorepair", UserCmd_AutoRepair, L"Usage: /autorepair"},
+	{ L"/autorepair*", UserCmd_AutoRepair, L"Usage: /autorepair"},
+	{ L"/health", UserCmd_Test, L"Nop"},
 };
 
 /**
@@ -807,6 +912,7 @@ EXPORT PLUGIN_INFO* Get_PluginInfo()
 	p_PI->ePluginReturnCode = &returncode;
 	
 	p_PI->lstHooks.push_back(PLUGIN_HOOKINFO((FARPROC*)&LoadSettings, PLUGIN_LoadSettings, 0));
+	p_PI->lstHooks.push_back(PLUGIN_HOOKINFO((FARPROC*)&BaseEnter_BEFORE, PLUGIN_HkIServerImpl_BaseEnter, 0));
 	p_PI->lstHooks.push_back(PLUGIN_HOOKINFO((FARPROC*)&BaseEnter_AFTER, PLUGIN_HkIServerImpl_BaseEnter_AFTER, 0));
 	p_PI->lstHooks.push_back(PLUGIN_HOOKINFO((FARPROC*)&CharacterSelect_AFTER, PLUGIN_HkIServerImpl_CharacterSelect_AFTER, 0));
 	p_PI->lstHooks.push_back(PLUGIN_HOOKINFO((FARPROC*)&ClearClientInfo, PLUGIN_ClearClientInfo, 0));
